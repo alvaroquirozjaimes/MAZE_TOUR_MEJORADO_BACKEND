@@ -1,0 +1,20 @@
+const express = require('express');
+const placeRoutes = require('./place.routes');
+const hotelRoutes = require('./hotel.routes');
+const restaurantRoutes = require('./restaurant.routes');
+const chatRoutes = require('./chat.routes');
+const authRoutes = require('./auth.routes');
+const fullDayRoutes = require('./full-day.routes');
+const adminDashboardRoutes = require('./admin-dashboard.routes');
+const contactRoutes = require('./contact.routes');
+
+const router = express.Router();
+router.use(placeRoutes);
+router.use(hotelRoutes);
+router.use(restaurantRoutes);
+router.use(chatRoutes);
+router.use(contactRoutes);
+router.use(authRoutes);
+router.use('/fulldays', fullDayRoutes);
+router.use('/admin', adminDashboardRoutes);
+module.exports = router;

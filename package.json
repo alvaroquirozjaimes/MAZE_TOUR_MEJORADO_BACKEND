@@ -1,0 +1,48 @@
+{
+  "name": "maze-tour-backend",
+  "version": "3.2.0",
+  "description": "API de MAZE TOUR con Express, Sequelize, PostgreSQL, migraciones versionadas, auditoría y seguridad.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "check": "node scripts/check-syntax.js",
+    "db:migrate": "node scripts/migrate.js up",
+    "db:migrate:status": "node scripts/migrate.js status",
+    "db:seed-admin": "node scripts/seed-admin.js",
+    "db:setup": "npm run db:migrate && npm run db:seed-admin && npm run db:audit",
+    "test": "node --test tests/*.test.js",
+    "test:all": "npm run check && npm test",
+    "media:migrate": "node scripts/migrate-legacy-media.js",
+    "media:audit": "node scripts/audit-media.js",
+    "backup": "node scripts/backup-command.js",
+    "db:audit": "node scripts/db-audit.js",
+    "db:validate-fks": "node scripts/validate-fks.js"
+  },
+  "keywords": [
+    "maze-tour",
+    "express",
+    "sequelize",
+    "postgresql"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "connect-pg-simple": "^10.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.1",
+    "express": "^5.1.0",
+    "express-session": "^1.18.2",
+    "multer": "^2.0.2",
+    "passport": "^0.7.0",
+    "passport-google-oauth20": "^2.0.0",
+    "pg": "^8.16.3",
+    "sequelize": "^6.37.7",
+    "sharp": "^0.34.3"
+  }
+}

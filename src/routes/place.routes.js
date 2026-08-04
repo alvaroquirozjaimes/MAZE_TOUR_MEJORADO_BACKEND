@@ -1,0 +1,20 @@
+const express = require('express');
+const controller = require('../controllers/place.controller');
+const { requireAdmin, requireAuth } = require('../middleware/auth');
+const { requireCsrf } = require('../middleware/csrf');
+const { uploadFields } = require('../middleware/upload');
+const { asyncHandler } = require('../utils/async-handler');
+
+const router = express.Router();
+router.get('/places/cities', asyncHandler(controller.cities));
+router.get('/places/favorites', requireAuth, asyncHandler(controller.favorites));
+router.get('/places/:id', asyncHandler(controller.getById));
+router.get('/places', asyncHandler(controller.list));
+router.post('/places/:id/like', requireAuth, requireCsrf, asyncHandler(controller.like));
+router.post('/places', requireAdmin, requireCsrf, uploadFields, asyncHandler(controller.create));
+router.put('/places/:id', requireAdmin, requireCsrf, uploadFields, asyncHandler(controller.update));
+router.patch('/places/:id/visibility', requireAdmin, requireCsrf, asyncHandler(controller.visibility));
+router.post('/places/:id/restore', requireAdmin, requireCsrf, asyncHandler(controller.restore));
+router.delete('/places/:id/permanent', requireAdmin, requireCsrf, asyncHandler(controller.removePermanently));
+router.delete('/places/:id', requireAdmin, requireCsrf, asyncHandler(controller.remove));
+module.exports = router;

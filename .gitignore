@@ -1,0 +1,21 @@
+node_modules/
+.env
+.env.*
+!.env.example
+logs/
+*.log
+coverage/
+.nyc_output/
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Datos generados en ejecución
+storage/uploads/*
+!storage/uploads/.gitkeep
+storage/uploads2/*
+!storage/uploads2/.gitkeep
+
+# Mantener el lockfile versionado
+storage/backups/
