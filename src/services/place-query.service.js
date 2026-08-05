@@ -1,6 +1,17 @@
 const { Op } = require('sequelize');
-const { Place, Hotel, Room, Restaurant, MenuItem, Like, sequelize } = require('../models');
+const {
+  Place,
+  Hotel,
+  Room,
+  Restaurant,
+  MenuItem,
+  Like,
+  Destination,
+  Region,
+  sequelize,
+} = require('../models');
 const { normalizeCategory, positiveInteger, toNumber } = require('../utils/parsers');
+const { env } = require('../config/env');
 
 const DEFAULT_PAGE_SIZE = 12;
 const MAX_PAGE_SIZE = 50;
@@ -8,7 +19,23 @@ const MAX_PAGE_SIZE = 50;
 const likesCountLiteral = () =>
   sequelize.literal('(SELECT COUNT(*)::int FROM "Likes" AS l WHERE l."placeId" = "Place"."id")');
 
+const locationInclude = (options = {}) => ({
+  model: Destination,
+  as: 'destination',
+  required: Boolean(options.required),
+  where: options.where,
+  attributes: ['id', 'regionId', 'name', 'slug', 'isActive'],
+  include: [{
+    model: Region,
+    as: 'region',
+    required: Boolean(options.regionRequired),
+    where: options.regionWhere,
+    attributes: ['id', 'countryCode', 'name', 'slug', 'isActive'],
+  }],
+});
+
 const detailIncludes = [
+  locationInclude(),
   { model: Hotel, as: 'hotels', include: [{ model: Room, as: 'rooms' }] },
   { model: Restaurant, as: 'restaurants', include: [{ model: MenuItem, as: 'menuItems' }] },
 ];
@@ -47,20 +74,44 @@ const addLiteral = (where, literal) => {
   where[Op.and] = [...existing, literal];
 };
 
+const positiveId = (value) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+};
+
 const listPlaces = async (query = {}) => {
   const where = { isHidden: false };
   if (query.billingDate) where.billingDate = query.billingDate;
-  if (query.city?.trim()) where.city = { [Op.iLike]: query.city.trim() };
+  const destinationId = positiveId(query.destinationId);
+  const regionId = positiveId(query.regionId);
+  if (destinationId) where.destinationId = destinationId;
+
+  const destinationWhere = {};
+  const regionWhere = { countryCode: env.countryCode };
+  if (regionId) regionWhere.id = regionId;
+
+  if (query.city?.trim()) {
+    const locationTerm = `%${query.city.trim()}%`;
+    where[Op.or] = [
+      { city: { [Op.iLike]: locationTerm } },
+      { '$destination.name$': { [Op.iLike]: locationTerm } },
+      { '$destination.region.name$': { [Op.iLike]: locationTerm } },
+    ];
+  }
 
   if (query.search?.trim()) {
     const term = `%${query.search.trim()}%`;
     const escaped = sequelize.escape(term);
-    where[Op.or] = [
+    const searchConditions = [
       { name: { [Op.iLike]: term } },
       { city: { [Op.iLike]: term } },
+      { '$destination.name$': { [Op.iLike]: term } },
+      { '$destination.region.name$': { [Op.iLike]: term } },
       sequelize.literal(`EXISTS (SELECT 1 FROM "Hotels" h WHERE h."placeId" = "Place"."id" AND h."name" ILIKE ${escaped})`),
       sequelize.literal(`EXISTS (SELECT 1 FROM "Restaurants" r WHERE r."placeId" = "Place"."id" AND r."name" ILIKE ${escaped})`),
     ];
+    if (where[Op.or]) addLiteral(where, { [Op.or]: searchConditions });
+    else where[Op.or] = searchConditions;
   }
 
   const category = query.category ? normalizeCategory(query.category) : null;
@@ -98,29 +149,42 @@ const listPlaces = async (query = {}) => {
   const page = positiveInteger(query.page, 1);
   const result = await Place.findAndCountAll({
     where,
+    include: [locationInclude({
+      required: Boolean(destinationId || regionId),
+      where: Object.keys(destinationWhere).length ? destinationWhere : undefined,
+      regionRequired: Boolean(regionId || destinationId),
+      regionWhere,
+    })],
     attributes: [
-      'id', 'name', 'shortDescription', 'imageUrl', 'price', 'city', 'category',
+      'id', 'name', 'shortDescription', 'imageUrl', 'price', 'city', 'destinationId', 'category',
       'createdAt', 'billingDate', [likesCountLiteral(), 'likesCount'],
     ],
     order: buildOrder(query.sort),
     limit: pageSize,
     offset: (page - 1) * pageSize,
+    distinct: true,
+    subQuery: false,
   });
 
   const total = Number(result.count) || 0;
   return {
-    data: result.rows.map((place) => ({
-      id: place.id,
-      name: place.name,
-      description: place.shortDescription,
-      imageUrl: place.imageUrl,
-      price: place.price,
-      city: place.city,
-      category: place.category,
-      createdAt: place.createdAt,
-      billingDate: place.billingDate,
-      likesCount: Number(place.get('likesCount')) || 0,
-    })),
+    data: result.rows.map((place) => {
+      const destination = place.destination?.toJSON?.() || place.destination || null;
+      return {
+        id: place.id,
+        name: place.name,
+        description: place.shortDescription,
+        imageUrl: place.imageUrl,
+        price: place.price,
+        city: destination?.name || place.city,
+        destinationId: place.destinationId,
+        destination,
+        category: place.category,
+        createdAt: place.createdAt,
+        billingDate: place.billingDate,
+        likesCount: Number(place.get('likesCount')) || 0,
+      };
+    }),
     meta: {
       total,
       page,
@@ -146,13 +210,28 @@ const listFavorites = async (userId) => {
 };
 
 const listCities = async () => {
-  const rows = await Place.findAll({
-    attributes: [[sequelize.fn('DISTINCT', sequelize.col('city')), 'city']],
-    where: { isHidden: false, city: { [Op.not]: null } },
-    order: [[sequelize.col('city'), 'ASC']],
+  const rows = await Destination.findAll({
+    attributes: ['name'],
+    where: { isActive: true },
+    include: [{
+      model: Region,
+      as: 'region',
+      attributes: [],
+      required: true,
+      where: { isActive: true, countryCode: env.countryCode },
+    }],
+    order: [['name', 'ASC']],
     raw: true,
   });
-  return rows.map((row) => String(row.city || '').trim()).filter(Boolean);
+  return [...new Set(rows.map((row) => String(row.name || '').trim()).filter(Boolean))];
 };
 
-module.exports = { detailIncludes, getPlaceDetail, likesCountLiteral, listCities, listFavorites, listPlaces };
+module.exports = {
+  detailIncludes,
+  getPlaceDetail,
+  likesCountLiteral,
+  listCities,
+  listFavorites,
+  listPlaces,
+  locationInclude,
+};

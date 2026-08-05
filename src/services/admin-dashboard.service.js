@@ -2,11 +2,13 @@ const { Op, literal } = require('sequelize');
 const {
   AdminActivityLog,
   ContactMessage,
+  Destination,
   FullDay,
   Hotel,
   Like,
   Place,
   Restaurant,
+  Region,
   Room,
   User,
 } = require('../models');
@@ -29,9 +31,16 @@ const buildWhere = (query = {}) => {
   const { stateWhere } = stateOptions(query.status);
   const where = { ...stateWhere };
   if (query.billingDate) where.billingDate = query.billingDate;
+  const destinationId = Number.parseInt(query.destinationId, 10);
+  if (Number.isInteger(destinationId) && destinationId > 0) where.destinationId = destinationId;
   if (query.search?.trim()) {
     const term = `%${query.search.trim()}%`;
-    where[Op.or] = [{ name: { [Op.iLike]: term } }, { city: { [Op.iLike]: term } }];
+    where[Op.or] = [
+      { name: { [Op.iLike]: term } },
+      { city: { [Op.iLike]: term } },
+      { '$destination.name$': { [Op.iLike]: term } },
+      { '$destination.region.name$': { [Op.iLike]: term } },
+    ];
   }
   return where;
 };
@@ -62,28 +71,53 @@ const buildMeta = (count, page, pageSize) => {
 const listEntity = async (Model, attributes, query) => {
   const { page, pageSize, limit, offset } = paginationFrom(query);
   const { paranoid } = stateOptions(query.status);
+  const regionId = Number.parseInt(query.regionId, 10);
   const result = await Model.findAndCountAll({
     where: buildWhere(query),
     paranoid,
     attributes,
+    include: [{
+      model: Destination,
+      as: 'destination',
+      required: Number.isInteger(regionId) && regionId > 0,
+      attributes: ['id', 'regionId', 'name'],
+      include: [{
+        model: Region,
+        as: 'region',
+        required: Number.isInteger(regionId) && regionId > 0,
+        where: Number.isInteger(regionId) && regionId > 0 ? { id: regionId } : undefined,
+        attributes: ['id', 'name'],
+      }],
+    }],
     order: buildOrder(query.sort),
     limit,
     offset,
+    distinct: true,
+    subQuery: false,
   });
-  return { data: result.rows, meta: buildMeta(result.count, page, pageSize) };
+  const data = result.rows.map((row) => {
+    const value = row.toJSON();
+    return {
+      ...value,
+      city: value.destination?.name || value.city,
+      destinationName: value.destination?.name || value.city || null,
+      regionName: value.destination?.region?.name || null,
+    };
+  });
+  return { data, meta: buildMeta(result.count, page, pageSize) };
 };
 
 const listAdminPlaces = (query = {}) =>
   listEntity(
     Place,
-    ['id', 'name', 'imageUrl', 'category', 'city', 'billingDate', 'isHidden', 'deletedAt', 'createdAt', 'updatedAt'],
+    ['id', 'name', 'imageUrl', 'category', 'city', 'destinationId', 'billingDate', 'isHidden', 'deletedAt', 'createdAt', 'updatedAt'],
     query
   );
 
 const listAdminFullDays = (query = {}) =>
   listEntity(
     FullDay,
-    ['id', 'name', 'imageUrl', 'city', 'billingDate', 'isHidden', 'deletedAt', 'createdAt', 'updatedAt'],
+    ['id', 'name', 'imageUrl', 'city', 'destinationId', 'billingDate', 'isHidden', 'deletedAt', 'createdAt', 'updatedAt'],
     query
   );
 
@@ -97,6 +131,8 @@ const buildRelatedWhere = (query = {}) => {
       { description: { [Op.iLike]: term } },
       { '$place.name$': { [Op.iLike]: term } },
       { '$place.city$': { [Op.iLike]: term } },
+      { '$place.destination.name$': { [Op.iLike]: term } },
+      { '$place.destination.region.name$': { [Op.iLike]: term } },
     ];
   }
   return where;
@@ -130,7 +166,13 @@ const listRelatedEntity = async (Model, type, query = {}) => {
         required: true,
         paranoid,
         where: placeWhere,
-        attributes: ['id', 'name', 'city', 'billingDate', 'isHidden', 'deletedAt', 'imageUrl'],
+        attributes: ['id', 'name', 'city', 'destinationId', 'billingDate', 'isHidden', 'deletedAt', 'imageUrl'],
+        include: [{
+          model: Destination,
+          as: 'destination',
+          attributes: ['id', 'regionId', 'name'],
+          include: [{ model: Region, as: 'region', attributes: ['id', 'name'] }],
+        }],
       },
     ],
     order: buildRelatedOrder(query.sort),
@@ -150,7 +192,9 @@ const listRelatedEntity = async (Model, type, query = {}) => {
       description: value.description,
       category: type,
       imageUrl: images[0] || value.place?.imageUrl || null,
-      city: value.place?.city || null,
+      city: value.place?.destination?.name || value.place?.city || null,
+      destinationName: value.place?.destination?.name || value.place?.city || null,
+      regionName: value.place?.destination?.region?.name || null,
       billingDate: value.place?.billingDate || null,
       isHidden: Boolean(value.place?.isHidden),
       deletedAt: value.place?.deletedAt || null,

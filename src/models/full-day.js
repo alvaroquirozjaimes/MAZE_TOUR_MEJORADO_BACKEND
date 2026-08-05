@@ -4,6 +4,11 @@ module.exports = (sequelize, DataTypes) =>
     {
       id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
       name: { type: DataTypes.STRING(180), allowNull: false, validate: { notEmpty: true } },
+      destinationId: { type: DataTypes.INTEGER, allowNull: true },
+      mapAddress: { type: DataTypes.STRING(255), allowNull: true },
+      latitude: { type: DataTypes.DECIMAL(10, 8), allowNull: true },
+      longitude: { type: DataTypes.DECIMAL(11, 8), allowNull: true },
+      showOnMap: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
       city: { type: DataTypes.STRING(120), allowNull: false, validate: { notEmpty: true } },
       description: { type: DataTypes.TEXT, allowNull: true },
       price: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0, validate: { min: 0 } },
@@ -27,6 +32,8 @@ module.exports = (sequelize, DataTypes) =>
       version: true,
       indexes: [
         { fields: ['deletedAt', 'isHidden', 'createdAt'], name: 'idx_full_days_admin_state' },
+        { fields: ['destinationId'], name: 'idx_full_days_destination' },
+        { fields: ['showOnMap', 'isHidden'], name: 'idx_full_days_map_visibility' },
         { fields: ['city'], name: 'idx_full_days_city' },
         { fields: ['billingDate'], name: 'idx_full_days_billing_date' },
       ],

@@ -17,6 +17,8 @@ const fieldDirectories = {
   restaurantMenuPdf: 'restaurantPdfs',
   restaurantMenuPdfs: 'restaurantPdfs',
   images: 'fullDays',
+  regionImage: 'regions',
+  destinationImage: 'destinations',
 };
 
 const pdfFields = new Set(['restaurantMenuPdf', 'restaurantMenuPdfs']);
@@ -52,6 +54,8 @@ const rawUpload = multer({
   { name: 'restaurantMenuPdf', maxCount: 6 },
   { name: 'restaurantMenuPdfs', maxCount: 6 },
   { name: 'images', maxCount: 1 },
+  { name: 'regionImage', maxCount: 1 },
+  { name: 'destinationImage', maxCount: 1 },
 ]);
 
 const allFiles = (req) => Object.values(req.files || {}).flat();

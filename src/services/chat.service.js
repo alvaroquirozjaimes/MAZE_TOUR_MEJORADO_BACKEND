@@ -1,7 +1,7 @@
 const { Op } = require('sequelize');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { env } = require('../config/env');
-const { Place, Hotel, Restaurant, Room, MenuItem, sequelize } = require('../models');
+const { Place, Hotel, Restaurant, Room, MenuItem, Destination, Region, sequelize } = require('../models');
 
 const client = env.geminiApiKey ? new GoogleGenerativeAI(env.geminiApiKey) : null;
 const model = client ? client.getGenerativeModel({ model: env.geminiModel }) : null;
@@ -80,12 +80,26 @@ const answerChat = async (message) => {
   const city = intent.city;
   const priceRange = parsePriceRange(intent.priceRange);
   const visibleWhere = { isHidden: false };
-  if (city) visibleWhere.city = { [Op.iLike]: `%${city}%` };
+  if (city) {
+    const locationTerm = `%${city}%`;
+    visibleWhere[Op.or] = [
+      { city: { [Op.iLike]: locationTerm } },
+      { '$destination.name$': { [Op.iLike]: locationTerm } },
+      { '$destination.region.name$': { [Op.iLike]: locationTerm } },
+    ];
+  }
+  const destinationInclude = {
+    model: Destination,
+    as: 'destination',
+    required: Boolean(city),
+    attributes: ['id', 'name'],
+    include: [{ model: Region, as: 'region', attributes: ['id', 'name'] }],
+  };
 
   if (['getHotels', 'getRoomsByPrice'].includes(intent.intention)) {
     const places = await Place.findAll({
       where: visibleWhere,
-      include: [{
+      include: [destinationInclude, {
         model: Hotel,
         as: 'hotels',
         required: true,
@@ -100,6 +114,7 @@ const answerChat = async (message) => {
       order: [[sequelize.literal('"likesCount"'), 'DESC']],
       limit: 5,
       distinct: true,
+      subQuery: false,
     });
     const hotels = places.flatMap((place) => place.hotels || []);
     const response = hotels.length
@@ -114,7 +129,7 @@ const answerChat = async (message) => {
   if (intent.intention === 'getRestaurants') {
     const places = await Place.findAll({
       where: visibleWhere,
-      include: [{
+      include: [destinationInclude, {
         model: Restaurant,
         as: 'restaurants',
         required: true,
@@ -129,6 +144,7 @@ const answerChat = async (message) => {
       order: [[sequelize.literal('"likesCount"'), 'DESC']],
       limit: 5,
       distinct: true,
+      subQuery: false,
     });
     const restaurants = places.flatMap((place) => place.restaurants || []);
     const response = restaurants.length
@@ -143,9 +159,11 @@ const answerChat = async (message) => {
   if (['getPlaces', 'getPopularPlaces'].includes(intent.intention)) {
     const places = await Place.findAll({
       where: visibleWhere,
+      include: [destinationInclude],
       attributes: ['id', 'name', 'shortDescription', 'imageUrl', 'city', 'category', [likesCountLiteral(), 'likesCount']],
       order: [[sequelize.literal('"likesCount"'), 'DESC']],
       limit: 5,
+      subQuery: false,
     });
     const response = places.length
       ? `🏝 Lugares turísticos${city ? ` en ${city}` : ''}:\n${places.map((place) => `- **${place.name}**: ${place.shortDescription || 'Sin descripción.'}`).join('\n')}`
@@ -156,7 +174,7 @@ const answerChat = async (message) => {
   if (model) {
     try {
       const result = await withTimeout(
-        model.generateContent(`Responde en máximo dos líneas, de manera amable y sobre turismo en Perú. Mensaje: ${JSON.stringify(message)}`),
+        model.generateContent(`Responde en máximo dos líneas, de manera amable y sobre turismo en ${env.countryName}. Mensaje: ${JSON.stringify(message)}`),
         env.chatTimeoutMs
       );
       return cacheSet(cacheKey, { message: (await result.response).text(), places: [], hotels: [], restaurants: [] });

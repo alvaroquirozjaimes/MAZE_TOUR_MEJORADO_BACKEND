@@ -30,6 +30,8 @@ const env = Object.freeze({
   nodeEnv,
   isProduction: nodeEnv === 'production',
   port: toInteger(process.env.PORT, 5001),
+  countryCode: String(process.env.SITE_COUNTRY_CODE || 'PE').trim().toUpperCase(),
+  countryName: String(process.env.SITE_COUNTRY_NAME || 'Perú').trim(),
 
   databaseUrl: process.env.DATABASE_URL || '',
   dbHost: process.env.DB_HOST || '127.0.0.1',

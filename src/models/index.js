@@ -2,6 +2,8 @@ const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 
 const User = require('./user')(sequelize, DataTypes);
+const Region = require('./region')(sequelize, DataTypes);
+const Destination = require('./destination')(sequelize, DataTypes);
 const Place = require('./place')(sequelize, DataTypes);
 const Hotel = require('./hotel')(sequelize, DataTypes);
 const Room = require('./room')(sequelize, DataTypes);
@@ -12,6 +14,13 @@ const FullDay = require('./full-day')(sequelize, DataTypes);
 const AdminActivityLog = require('./admin-activity-log')(sequelize, DataTypes);
 const ContactMessage = require('./contact-message')(sequelize, DataTypes);
 const ApiRateLimit = require('./api-rate-limit')(sequelize, DataTypes);
+
+Region.hasMany(Destination, { as: 'destinations', foreignKey: 'regionId', onDelete: 'RESTRICT', onUpdate: 'CASCADE' });
+Destination.belongsTo(Region, { as: 'region', foreignKey: 'regionId' });
+Destination.hasMany(Place, { as: 'places', foreignKey: 'destinationId', onDelete: 'RESTRICT', onUpdate: 'CASCADE' });
+Place.belongsTo(Destination, { as: 'destination', foreignKey: 'destinationId' });
+Destination.hasMany(FullDay, { as: 'fullDays', foreignKey: 'destinationId', onDelete: 'RESTRICT', onUpdate: 'CASCADE' });
+FullDay.belongsTo(Destination, { as: 'destination', foreignKey: 'destinationId' });
 
 Place.hasMany(Hotel, { as: 'hotels', foreignKey: 'placeId', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
 Hotel.belongsTo(Place, { as: 'place', foreignKey: 'placeId' });
@@ -31,6 +40,8 @@ AdminActivityLog.belongsTo(User, { as: 'user', foreignKey: 'userId', targetKey: 
 module.exports = {
   sequelize,
   User,
+  Region,
+  Destination,
   Place,
   Hotel,
   Room,

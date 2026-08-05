@@ -1,0 +1,11 @@
+BEGIN;
+
+ALTER TABLE "Regions"
+  ADD COLUMN IF NOT EXISTS "imageUrl" TEXT,
+  ADD COLUMN IF NOT EXISTS "shortDescription" VARCHAR(500);
+
+ALTER TABLE "tour_destinations"
+  ADD COLUMN IF NOT EXISTS "image_url" TEXT,
+  ADD COLUMN IF NOT EXISTS "short_description" VARCHAR(500);
+
+COMMIT;

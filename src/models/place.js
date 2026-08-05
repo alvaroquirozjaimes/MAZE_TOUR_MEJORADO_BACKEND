@@ -4,7 +4,12 @@ module.exports = (sequelize, DataTypes) =>
     {
       id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
       name: { type: DataTypes.STRING(180), allowNull: false, validate: { notEmpty: true } },
-      city: { type: DataTypes.STRING(120), allowNull: false, defaultValue: 'Ciudad Desconocida', validate: { notEmpty: true } },
+      destinationId: { type: DataTypes.INTEGER, allowNull: true },
+      mapAddress: { type: DataTypes.STRING(255), allowNull: true },
+      latitude: { type: DataTypes.DECIMAL(10, 8), allowNull: true },
+      longitude: { type: DataTypes.DECIMAL(11, 8), allowNull: true },
+      showOnMap: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+      city: { type: DataTypes.STRING(120), allowNull: false, defaultValue: 'Destino no asignado', validate: { notEmpty: true } },
       category: { type: DataTypes.STRING(30), allowNull: false, defaultValue: 'lugar' },
       shortDescription: { type: DataTypes.STRING(500), allowNull: true },
       longDescription: { type: DataTypes.TEXT, allowNull: true },
@@ -23,6 +28,8 @@ module.exports = (sequelize, DataTypes) =>
       version: true,
       indexes: [
         { fields: ['deletedAt', 'isHidden', 'createdAt'], name: 'idx_places_admin_state' },
+        { fields: ['destinationId'], name: 'idx_places_destination' },
+        { fields: ['showOnMap', 'isHidden'], name: 'idx_places_map_visibility' },
         { fields: ['city'], name: 'idx_places_city' },
         { fields: ['category'], name: 'idx_places_category' },
         { fields: ['billingDate'], name: 'idx_places_billing_date' },

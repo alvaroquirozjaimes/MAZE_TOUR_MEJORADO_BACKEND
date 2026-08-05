@@ -7,6 +7,8 @@ const authRoutes = require('./auth.routes');
 const fullDayRoutes = require('./full-day.routes');
 const adminDashboardRoutes = require('./admin-dashboard.routes');
 const contactRoutes = require('./contact.routes');
+const locationRoutes = require('./location.routes');
+const mapRoutes = require('./map.routes');
 
 const router = express.Router();
 router.use(placeRoutes);
@@ -14,6 +16,8 @@ router.use(hotelRoutes);
 router.use(restaurantRoutes);
 router.use(chatRoutes);
 router.use(contactRoutes);
+router.use(locationRoutes);
+router.use(mapRoutes);
 router.use(authRoutes);
 router.use('/fulldays', fullDayRoutes);
 router.use('/admin', adminDashboardRoutes);

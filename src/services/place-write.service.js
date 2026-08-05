@@ -11,6 +11,7 @@ const {
 } = require('../utils/file-storage');
 const { getPlaceDetail } = require('./place-query.service');
 const { logAdminAction } = require('./audit.service');
+const { getDestination } = require('./location.service');
 
 const filesFor = (req, field) => req.files?.[field] || [];
 const integerId = (value) => {
@@ -25,7 +26,7 @@ const textOrNull = (value) => {
 
 const validatePlaceInput = (body, { partial = false } = {}) => {
   if (!partial) {
-    for (const field of ['name', 'city', 'billingDate']) {
+    for (const field of ['name', 'billingDate', 'destinationId']) {
       if (!String(body[field] || '').trim()) throw new AppError(`El campo "${field}" es obligatorio.`, 400);
     }
   }
@@ -251,6 +252,7 @@ const createPlace = async (req) => {
   let placeId;
   try {
     const { hotels, restaurants } = parseNested(req.body);
+    const destination = await getDestination(integerId(req.body.destinationId), { transaction });
     const mainImage = storedPathForFile(filesFor(req, 'mainImage')[0]);
     const gallery = filesFor(req, 'gallery').map(storedPathForFile).filter(Boolean);
     const fallbackImage = mainImage || storedPathForFile(filesFor(req, 'hotelImages')[0]) || storedPathForFile(filesFor(req, 'restaurantImages')[0]);
@@ -258,7 +260,8 @@ const createPlace = async (req) => {
     const place = await Place.create(
       {
         name: req.body.name.trim(),
-        city: req.body.city.trim(),
+        destinationId: destination.id,
+        city: destination.name,
         shortDescription: textOrNull(req.body.shortDescription),
         longDescription: textOrNull(req.body.longDescription),
         price: toNumber(req.body.price, 0),
@@ -301,8 +304,13 @@ const updatePlace = async (id, req) => {
     const place = await Place.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
     if (!place) throw new AppError('Lugar no encontrado.', 404);
     const values = { updatedBy: actorId(req) };
-    for (const field of ['name', 'city', 'shortDescription', 'longDescription', 'billingDate']) {
+    for (const field of ['name', 'shortDescription', 'longDescription', 'billingDate']) {
       if (req.body[field] !== undefined) values[field] = typeof req.body[field] === 'string' ? req.body[field].trim() : req.body[field];
+    }
+    if (req.body.destinationId !== undefined) {
+      const destination = await getDestination(integerId(req.body.destinationId), { transaction });
+      values.destinationId = destination.id;
+      values.city = destination.name;
     }
     if (req.body.price !== undefined) values.price = toNumber(req.body.price, place.price);
     if (req.body.category !== undefined) values.category = normalizeCategory(req.body.category);
