@@ -2,7 +2,7 @@ const { Op } = require('sequelize');
 const { FullDay, Destination, Region, sequelize } = require('../models');
 const { AppError } = require('../utils/app-error');
 const { deleteStoredFiles, storedPathForFile, uploadedPathsFromRequest } = require('../utils/file-storage');
-const { positiveInteger, toNumber } = require('../utils/parsers');
+const { positiveInteger } = require('../utils/parsers');
 const { logAdminAction } = require('./audit.service');
 const { getDestination } = require('./location.service');
 const { env } = require('../config/env');
@@ -35,10 +35,6 @@ const validate = (body, partial = false) => {
       if (!String(body[field] || '').trim()) throw new AppError(`El campo "${field}" es obligatorio.`, 400);
     }
   }
-  if (body.price !== undefined) {
-    const price = toNumber(body.price, null);
-    if (price === null || price < 0) throw new AppError('El precio no es válido.', 400);
-  }
 };
 
 const createFullDay = async (req) => {
@@ -54,7 +50,7 @@ const createFullDay = async (req) => {
         destinationId: destination.id,
         city: destination.name,
         description: req.body.description?.trim() || `Disfruta un día completo en ${destination.name}`,
-        price: toNumber(req.body.price, 0),
+        price: 0,
         billingDate: req.body.billingDate,
         imageUrl: storedPathForFile(image),
         createdBy: actorId(req),
@@ -79,8 +75,6 @@ const buildOrder = (sort) => {
     name_desc: [['name', 'DESC']],
     oldest: [['createdAt', 'ASC']],
     recent: [['createdAt', 'DESC']],
-    price_asc: [['price', 'ASC'], ['name', 'ASC']],
-    price_desc: [['price', 'DESC'], ['name', 'ASC']],
   };
   return options[String(sort || '').toLowerCase()] || options.recent;
 };
@@ -163,7 +157,6 @@ const updateFullDay = async (id, req) => {
       values.destinationId = destination.id;
       values.city = destination.name;
     }
-    if (req.body.price !== undefined && req.body.price !== '') values.price = toNumber(req.body.price, fullDay.price);
     if (image) values.imageUrl = storedPathForFile(image);
     await fullDay.update(values, { transaction });
     await logAdminAction({ req, action: 'update', entityType: 'FullDay', entityId: id, details: { name: fullDay.name }, transaction });
