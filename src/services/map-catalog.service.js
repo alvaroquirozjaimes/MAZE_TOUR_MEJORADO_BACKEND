@@ -133,6 +133,10 @@ const listMapCatalog = async (query = {}, { admin = false } = {}) => {
       ? Place.findAll({
           where: placeWhere,
           include,
+          attributes: [
+            'id', 'category', 'name', 'shortDescription', 'imageUrl', 'mapAddress',
+            'latitude', 'longitude', 'showOnMap', 'isHidden', 'destinationId',
+          ],
           order: [['showOnMap', 'DESC'], ['name', 'ASC']],
           limit: admin ? 500 : 300,
         })
@@ -141,6 +145,10 @@ const listMapCatalog = async (query = {}, { admin = false } = {}) => {
       ? FullDay.findAll({
           where: fullDayWhere,
           include: [locationInclude(regionId, destinationId)],
+          attributes: [
+            'id', 'name', 'description', 'imageUrl', 'mapAddress', 'latitude', 'longitude',
+            'showOnMap', 'isHidden', 'destinationId',
+          ],
           order: [['showOnMap', 'DESC'], ['name', 'ASC']],
           limit: admin ? 500 : 300,
         })

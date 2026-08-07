@@ -1,14 +1,22 @@
-const { createApp } = require('./app');
 const { env } = require('./config/env');
 const { connectDatabase, sequelize } = require('./config/database');
-const { assertMigrationsApplied } = require('./database/migration-status');
+const { runPendingMigrations, assertMigrationsApplied } = require('./database/migration-status');
 
 let server;
 let shuttingDown = false;
 
 const start = async () => {
   await connectDatabase();
-  await assertMigrationsApplied();
+
+  if (env.dbAutoMigrate) {
+    await runPendingMigrations();
+  } else {
+    await assertMigrationsApplied();
+  }
+
+  // Se carga la aplicación después de preparar la base de datos. De esta forma
+  // una instalación nueva puede arrancar sin ejecutar scripts manuales previos.
+  const { createApp } = require('./app');
   const app = createApp();
   server = app.listen(env.port, () => {
     console.log(`MAZE TOUR API activa en el puerto ${env.port} (${env.nodeEnv}).`);

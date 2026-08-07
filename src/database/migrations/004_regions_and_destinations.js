@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS "Regions" (
   "countryCode" VARCHAR(2) NOT NULL,
   "name" VARCHAR(120) NOT NULL,
   "slug" VARCHAR(140) NOT NULL,
+  "imageUrl" TEXT NULL,
+  "shortDescription" VARCHAR(500) NULL,
   "isActive" BOOLEAN NOT NULL DEFAULT TRUE,
   "sortOrder" INTEGER NOT NULL DEFAULT 0,
   "version" INTEGER NOT NULL DEFAULT 0,
@@ -27,45 +29,61 @@ CREATE TABLE IF NOT EXISTS "Regions" (
   "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS "Destinations" (
-  "id" SERIAL PRIMARY KEY,
-  "regionId" INTEGER NOT NULL,
-  "name" VARCHAR(140) NOT NULL,
-  "slug" VARCHAR(160) NOT NULL,
+-- Esta es la única tabla de destinos utilizada por el modelo actual.
+CREATE TABLE IF NOT EXISTS tour_destinations (
+  id SERIAL PRIMARY KEY,
+  region_id INTEGER NOT NULL,
+  name VARCHAR(150) NOT NULL,
+  slug VARCHAR(180) NOT NULL,
+  image_url TEXT NULL,
+  short_description VARCHAR(500) NULL,
   "isActive" BOOLEAN NOT NULL DEFAULT TRUE,
   "sortOrder" INTEGER NOT NULL DEFAULT 0,
-  "version" INTEGER NOT NULL DEFAULT 0,
   "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-ALTER TABLE "Places" ADD COLUMN IF NOT EXISTS "destinationId" INTEGER NULL;
-ALTER TABLE "FullDays" ADD COLUMN IF NOT EXISTS "destinationId" INTEGER NULL;
+ALTER TABLE "Places"
+  ADD COLUMN IF NOT EXISTS "destinationId" INTEGER NULL,
+  ADD COLUMN IF NOT EXISTS "mapAddress" VARCHAR(255) NULL,
+  ADD COLUMN IF NOT EXISTS "latitude" NUMERIC(10,8) NULL,
+  ADD COLUMN IF NOT EXISTS "longitude" NUMERIC(11,8) NULL,
+  ADD COLUMN IF NOT EXISTS "showOnMap" BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE "FullDays"
+  ADD COLUMN IF NOT EXISTS "destinationId" INTEGER NULL,
+  ADD COLUMN IF NOT EXISTS "mapAddress" VARCHAR(255) NULL,
+  ADD COLUMN IF NOT EXISTS "latitude" NUMERIC(10,8) NULL,
+  ADD COLUMN IF NOT EXISTS "longitude" NUMERIC(11,8) NULL,
+  ADD COLUMN IF NOT EXISTS "showOnMap" BOOLEAN NOT NULL DEFAULT FALSE;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_destinations_region') THEN
-    ALTER TABLE "Destinations"
-      ADD CONSTRAINT fk_destinations_region FOREIGN KEY ("regionId") REFERENCES "Regions"("id")
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_tour_destinations_region') THEN
+    ALTER TABLE tour_destinations
+      ADD CONSTRAINT fk_tour_destinations_region FOREIGN KEY (region_id) REFERENCES "Regions"("id")
       ON UPDATE CASCADE ON DELETE RESTRICT;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_places_destination') THEN
     ALTER TABLE "Places"
-      ADD CONSTRAINT fk_places_destination FOREIGN KEY ("destinationId") REFERENCES "Destinations"("id")
-      ON UPDATE CASCADE ON DELETE RESTRICT;
+      ADD CONSTRAINT fk_places_destination FOREIGN KEY ("destinationId") REFERENCES tour_destinations(id)
+      ON UPDATE CASCADE ON DELETE SET NULL;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_full_days_destination') THEN
     ALTER TABLE "FullDays"
-      ADD CONSTRAINT fk_full_days_destination FOREIGN KEY ("destinationId") REFERENCES "Destinations"("id")
-      ON UPDATE CASCADE ON DELETE RESTRICT;
+      ADD CONSTRAINT fk_full_days_destination FOREIGN KEY ("destinationId") REFERENCES tour_destinations(id)
+      ON UPDATE CASCADE ON DELETE SET NULL;
   END IF;
 END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_regions_country_slug ON "Regions" ("countryCode", "slug");
-CREATE UNIQUE INDEX IF NOT EXISTS uq_destinations_region_slug ON "Destinations" ("regionId", "slug");
+CREATE UNIQUE INDEX IF NOT EXISTS uq_tour_destinations_region_slug ON tour_destinations (region_id, slug);
 CREATE INDEX IF NOT EXISTS idx_regions_catalog ON "Regions" ("isActive", "sortOrder", "name");
-CREATE INDEX IF NOT EXISTS idx_destinations_catalog ON "Destinations" ("regionId", "isActive", "sortOrder", "name");
+CREATE INDEX IF NOT EXISTS idx_tour_destinations_catalog ON tour_destinations (region_id, "isActive", "sortOrder", name);
+CREATE INDEX IF NOT EXISTS idx_tour_destinations_region ON tour_destinations (region_id);
 CREATE INDEX IF NOT EXISTS idx_places_destination ON "Places" ("destinationId");
 CREATE INDEX IF NOT EXISTS idx_full_days_destination ON "FullDays" ("destinationId");
+CREATE INDEX IF NOT EXISTS idx_places_map_visibility ON "Places" ("showOnMap", "isHidden");
+CREATE INDEX IF NOT EXISTS idx_full_days_map_visibility ON "FullDays" ("showOnMap", "isHidden");
 `;
 
 module.exports = {
@@ -84,6 +102,7 @@ module.exports = {
       );
     }
 
+    // Compatibilidad con instalaciones antiguas que solo tenían el texto city.
     const [legacyCities] = await sequelize.query(
       `SELECT DISTINCT TRIM("city") AS "city"
        FROM (
@@ -117,20 +136,13 @@ module.exports = {
         const city = legacyCities[index].city;
         const slug = slugify(city) || `destino-${index + 1}`;
         const [destinationRows] = await sequelize.query(
-          `INSERT INTO "Destinations" ("regionId", "name", "slug", "isActive", "sortOrder", "version", "createdAt", "updatedAt")
-           VALUES (:regionId, :name, :slug, FALSE, :sortOrder, 0, NOW(), NOW())
-           ON CONFLICT ("regionId", "slug") DO UPDATE SET "name" = EXCLUDED."name"
-           RETURNING "id";`,
+          `INSERT INTO tour_destinations (region_id, name, slug, "isActive", "sortOrder", "createdAt", "updatedAt")
+           VALUES (:regionId, :name, :slug, FALSE, :sortOrder, NOW(), NOW())
+           ON CONFLICT (region_id, slug) DO UPDATE SET name = EXCLUDED.name
+           RETURNING id;`,
           { replacements: { regionId, name: city, slug, sortOrder: index }, transaction }
         );
-        let destinationId = destinationRows[0]?.id;
-        if (!destinationId) {
-          const [rows] = await sequelize.query(
-            `SELECT "id" FROM "Destinations" WHERE "regionId" = :regionId AND "slug" = :slug LIMIT 1;`,
-            { replacements: { regionId, slug }, transaction }
-          );
-          destinationId = rows[0]?.id;
-        }
+        const destinationId = destinationRows[0]?.id;
         await sequelize.query(
           `UPDATE "Places" SET "destinationId" = :destinationId WHERE "destinationId" IS NULL AND LOWER(TRIM("city")) = LOWER(:city);
            UPDATE "FullDays" SET "destinationId" = :destinationId WHERE "destinationId" IS NULL AND LOWER(TRIM("city")) = LOWER(:city);`,

@@ -45,6 +45,8 @@ const env = Object.freeze({
   dbPoolMin: toInteger(process.env.DB_POOL_MIN, 0),
   dbPoolIdleMs: toInteger(process.env.DB_POOL_IDLE_MS, 10000),
   dbPoolAcquireMs: toInteger(process.env.DB_POOL_ACQUIRE_MS, 30000),
+  // Activo por defecto: una instalación nueva prepara su esquema al arrancar.
+  dbAutoMigrate: toBoolean(process.env.DB_AUTO_MIGRATE, true),
 
   sessionSecret:
     process.env.SESSION_SECRET ||
