@@ -288,7 +288,10 @@ const listContactMessages = async (query = {}) => {
     const term = `%${query.search.trim()}%`;
     where[Op.or] = [
       { name: { [Op.iLike]: term } },
-      { email: { [Op.iLike]: term } },
+      /* Antes se buscaba por correo. El formulario ya no lo pide, así
+         que el celular es el dato con el que el admin identifica a
+         quien escribió. */
+      { phone: { [Op.iLike]: term } },
       { message: { [Op.iLike]: term } },
     ];
   }
