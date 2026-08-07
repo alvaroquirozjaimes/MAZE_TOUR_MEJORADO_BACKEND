@@ -15,7 +15,12 @@ const {
 const create = async (req, res) => res.status(201).json(await createPlace(req));
 
 const list = async (req, res) => {
-  const result = await listPlaces(req.query);
+  /* La ruta es pública, pero la sesión llega igual cuando existe: con ella
+     sabemos qué corazones pintar. Sin sesión, viewerId queda null. */
+  const result = await listPlaces(req.query, req.user?.googleId || null);
+  /* La respuesta ahora varía por usuario; ningún proxy debe reutilizarla. */
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('Vary', 'Cookie');
   res.setHeader('X-Total-Count', result.meta.total);
   res.setHeader('X-Page', result.meta.page);
   res.setHeader('X-Page-Size', result.meta.pageSize);

@@ -19,6 +19,16 @@ const MAX_PAGE_SIZE = 50;
 const likesCountLiteral = () =>
   sequelize.literal('(SELECT COUNT(*)::int FROM "Likes" AS l WHERE l."placeId" = "Place"."id")');
 
+/* El corazón es por usuario: el contador es global, pero "liked" solo puede
+   salir true para quien pide el listado. Si nadie inició sesión devolvemos
+   FALSE constante para que la tarjeta nunca herede el like de otro. */
+const likedLiteral = (viewerId) => {
+  if (!viewerId) return sequelize.literal('FALSE');
+  return sequelize.literal(
+    `EXISTS (SELECT 1 FROM "Likes" AS lv WHERE lv."placeId" = "Place"."id" AND lv."userId" = ${sequelize.escape(String(viewerId))})`
+  );
+};
+
 const locationInclude = (options = {}) => ({
   model: Destination,
   as: 'destination',
@@ -79,7 +89,7 @@ const positiveId = (value) => {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 };
 
-const listPlaces = async (query = {}) => {
+const listPlaces = async (query = {}, viewerId = null) => {
   const where = { isHidden: false };
   if (query.billingDate) where.billingDate = query.billingDate;
   const destinationId = positiveId(query.destinationId);
@@ -158,6 +168,7 @@ const listPlaces = async (query = {}) => {
     attributes: [
       'id', 'name', 'shortDescription', 'imageUrl', 'price', 'city', 'destinationId', 'category',
       'createdAt', 'billingDate', [likesCountLiteral(), 'likesCount'],
+      [likedLiteral(viewerId), 'liked'],
     ],
     order: buildOrder(query.sort),
     limit: pageSize,
@@ -183,6 +194,7 @@ const listPlaces = async (query = {}) => {
         createdAt: place.createdAt,
         billingDate: place.billingDate,
         likesCount: Number(place.get('likesCount')) || 0,
+        liked: Boolean(place.get('liked')),
       };
     }),
     meta: {
@@ -206,7 +218,13 @@ const listFavorites = async (userId) => {
     order: [[sequelize.literal('"likesCount"'), 'DESC'], ...detailOrder],
     subQuery: false,
   });
-  return places.map((place) => ({ ...place.toJSON(), likesCount: Number(place.get('likesCount')) || 0 }));
+  /* Aquí el filtro ya es "likes de este usuario", así que liked es true por
+     definición: la tarjeta debe salir en rojo sin pedir otra consulta. */
+  return places.map((place) => ({
+    ...place.toJSON(),
+    likesCount: Number(place.get('likesCount')) || 0,
+    liked: true,
+  }));
 };
 
 const listCities = async () => {
@@ -229,6 +247,7 @@ const listCities = async () => {
 module.exports = {
   detailIncludes,
   getPlaceDetail,
+  likedLiteral,
   likesCountLiteral,
   listCities,
   listFavorites,
