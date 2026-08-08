@@ -19,6 +19,13 @@ const MAX_PAGE_SIZE = 50;
 const likesCountLiteral = () =>
   sequelize.literal('(SELECT COUNT(*)::int FROM "Likes" AS l WHERE l."placeId" = "Place"."id")');
 
+/* Un lugar turístico puede tener hospedaje y comida propios. Eso hoy solo
+   se descubre entrando a la ficha, así que el listado no lo comunica. Se
+   cuentan los hijos con una subconsulta para que la tarjeta pueda anunciarlo
+   sin traer el detalle completo de cada hotel y restaurante. */
+const childCountLiteral = (table) =>
+  sequelize.literal(`(SELECT COUNT(*)::int FROM "${table}" AS c WHERE c."placeId" = "Place"."id")`);
+
 /* El corazón es por usuario: el contador es global, pero "liked" solo puede
    salir true para quien pide el listado. Si nadie inició sesión devolvemos
    FALSE constante para que la tarjeta nunca herede el like de otro. */
@@ -169,6 +176,8 @@ const listPlaces = async (query = {}, viewerId = null) => {
       'id', 'name', 'shortDescription', 'imageUrl', 'price', 'city', 'destinationId', 'category',
       'createdAt', 'billingDate', [likesCountLiteral(), 'likesCount'],
       [likedLiteral(viewerId), 'liked'],
+      [childCountLiteral('Hotels'), 'hotelsCount'],
+      [childCountLiteral('Restaurants'), 'restaurantsCount'],
     ],
     order: buildOrder(query.sort),
     limit: pageSize,
@@ -195,6 +204,8 @@ const listPlaces = async (query = {}, viewerId = null) => {
         billingDate: place.billingDate,
         likesCount: Number(place.get('likesCount')) || 0,
         liked: Boolean(place.get('liked')),
+        hotelsCount: Number(place.get('hotelsCount')) || 0,
+        restaurantsCount: Number(place.get('restaurantsCount')) || 0,
       };
     }),
     meta: {
@@ -245,6 +256,7 @@ const listCities = async () => {
 };
 
 module.exports = {
+  childCountLiteral,
   detailIncludes,
   getPlaceDetail,
   likedLiteral,
