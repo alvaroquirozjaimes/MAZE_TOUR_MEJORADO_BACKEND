@@ -48,6 +48,34 @@ const safeExistingPaths = (values, allowedPaths) =>
     return isRemoteUrl(value) || allowedPaths.has(value);
   }))];
 
+/* La portada de la tarjeta sale de Place.imageUrl. Al crear se rellena
+   con la primera foto del hotel o del restaurante, pero al editar solo
+   cambiaba si llegaba un archivo en 'mainImage', y los formularios de
+   hotel y restaurante nunca envían ese campo: mandan 'hotelImages' y
+   'restaurantImages'.
+
+   Resultado: un restaurante creado sin fotos y con las fotos añadidas
+   después se quedaba con imageUrl en null para siempre. Su ficha se veía
+   bien (lee restaurant.images) pero en el catálogo salía el dibujo
+   genérico. Aquí se rellena el hueco después de sincronizar los hijos.
+
+   Solo rellena cuando está vacío: si alguien eligió portada a mano, se
+   respeta. */
+const backfillCoverImage = async ({ placeId, transaction }) => {
+  const place = await Place.findByPk(placeId, { transaction, lock: transaction.LOCK.UPDATE });
+  if (!place || (place.imageUrl && String(place.imageUrl).trim())) return;
+
+  const [hotel, restaurant] = await Promise.all([
+    Hotel.findOne({ where: { placeId }, order: [['id', 'ASC']], transaction }),
+    Restaurant.findOne({ where: { placeId }, order: [['id', 'ASC']], transaction }),
+  ]);
+
+  const cover = [hotel?.images?.[0], restaurant?.images?.[0]].find(
+    (value) => typeof value === 'string' && value.trim()
+  );
+  if (cover) await place.update({ imageUrl: cover }, { transaction });
+};
+
 const makeCursor = (req) => ({
   req,
   indexes: Object.create(null),
@@ -278,6 +306,7 @@ const createPlace = async (req) => {
     const allowedPaths = new Set(uploadedPaths);
     await syncHotels({ placeId: place.id, hotels, req, allowedPaths, transaction });
     await syncRestaurants({ placeId: place.id, restaurants, req, allowedPaths, transaction });
+    await backfillCoverImage({ placeId: place.id, transaction });
     await logAdminAction({ req, action: 'create', entityType: 'Place', entityId: place.id, details: { name: place.name }, transaction });
     await transaction.commit();
     placeId = place.id;
@@ -332,6 +361,11 @@ const updatePlace = async (id, req) => {
     if (req.body.restaurants !== undefined) {
       await syncRestaurants({ placeId: id, restaurants: parseJson(req.body.restaurants, []), req, allowedPaths, transaction });
     }
+
+    /* Después de los syncs, no antes: las fotos nuevas todavía no
+       existían en el hotel ni en el restaurante. */
+    await backfillCoverImage({ placeId: id, transaction });
+
     await logAdminAction({ req, action: 'update', entityType: 'Place', entityId: id, details: { name: place.name }, transaction });
     await transaction.commit();
   } catch (error) {

@@ -66,14 +66,51 @@ const destinationInclude = {
   attributes: ['id', 'regionId', 'name', 'slug', 'imageUrl', 'shortDescription', 'isActive', 'sortOrder'],
 };
 
-const listCatalog = async ({ includeInactive = false } = {}) => {
+/* Destinos que tienen al menos una publicación viva. Se consulta por
+   separado y no con un EXISTS en el include porque la misma lista sirve
+   para dos cosas: filtrar los destinos y, de rebote, saber qué regiones
+   se quedan sin ninguno.
+
+   Sin paranoid: false, o sea que un lugar en la papelera no cuenta. */
+const destinationIdsWithContent = async () => {
+  const [places, fullDays] = await Promise.all([
+    Place.findAll({
+      attributes: [[sequelize.fn('DISTINCT', sequelize.col('destinationId')), 'destinationId']],
+      where: { destinationId: { [Op.not]: null } },
+      raw: true,
+    }),
+    FullDay.findAll({
+      attributes: [[sequelize.fn('DISTINCT', sequelize.col('destinationId')), 'destinationId']],
+      where: { destinationId: { [Op.not]: null } },
+      raw: true,
+    }),
+  ]);
+
+  return new Set(
+    [...places, ...fullDays]
+      .map((row) => Number(row.destinationId))
+      .filter((id) => Number.isFinite(id))
+  );
+};
+
+/* onlyWithContent es lo que separa el selector público del panel.
+
+   El catálogo trae los 25 departamentos del país sembrados de inicio, así
+   que el buscador ofrecía Amazonas, Áncash, Apurímac… y quien elegía
+   cualquiera de ellos se topaba con "No se encontraron destinos". Un
+   selector no debería ofrecer caminos que no llevan a nada.
+
+   El panel de administración sigue viendo la lista entera: ahí sí hace
+   falta poder elegir un destino todavía vacío para crear el primero. */
+const listCatalog = async ({ includeInactive = false, onlyWithContent = false } = {}) => {
   const regionWhere = { countryCode: env.countryCode };
   const destinationWhere = {};
   if (!includeInactive) {
     regionWhere.isActive = true;
     destinationWhere.isActive = true;
   }
-  return Region.findAll({
+
+  const regions = await Region.findAll({
     where: regionWhere,
     attributes: ['id', 'countryCode', 'name', 'slug', 'imageUrl', 'shortDescription', 'isActive', 'sortOrder'],
     include: [{ ...destinationInclude, where: destinationWhere }],
@@ -84,6 +121,23 @@ const listCatalog = async ({ includeInactive = false } = {}) => {
       [{ model: Destination, as: 'destinations' }, 'name', 'ASC'],
     ],
   });
+
+  if (!onlyWithContent) return regions;
+
+  const withContent = await destinationIdsWithContent();
+
+  /* Se devuelven objetos planos, no instancias: al filtrar destinations
+     sobre una instancia de Sequelize el cambio no sobrevive al toJSON()
+     que hace res.json(). */
+  return regions
+    .map((region) => {
+      const value = region.toJSON();
+      value.destinations = value.destinations.filter((destination) =>
+        withContent.has(Number(destination.id))
+      );
+      return value;
+    })
+    .filter((region) => region.destinations.length > 0);
 };
 
 const getAdminCatalog = async () => {

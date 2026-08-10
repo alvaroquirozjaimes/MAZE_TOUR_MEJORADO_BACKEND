@@ -19,3 +19,5 @@ storage/uploads2/*
 
 # Mantener el lockfile versionado
 storage/backups/
+.env
+.env*

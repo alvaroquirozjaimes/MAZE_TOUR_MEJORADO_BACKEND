@@ -1,5 +1,5 @@
 const { Op } = require('sequelize');
-const { FullDay, Destination, Region, sequelize } = require('../models');
+const { FullDay, FullDayLike, Destination, Region, sequelize } = require('../models');
 const { AppError } = require('../utils/app-error');
 const { deleteStoredFiles, storedPathForFile, uploadedPathsFromRequest } = require('../utils/file-storage');
 const { positiveInteger } = require('../utils/parsers');
@@ -13,6 +13,29 @@ const actorId = (req) => req.user?.googleId || null;
 const integerId = (value) => {
   const parsed = Number.parseInt(value, 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+};
+
+/* Los likes se cuentan con una subconsulta en vez de un JOIN: con
+   include + findAndCountAll, un Full Day con veinte likes se duplica
+   veinte veces en el conteo de la paginación. */
+const likesCountLiteral = () =>
+  sequelize.literal('(SELECT COUNT(*)::int FROM "FullDayLikes" AS fl WHERE fl."fullDayId" = "FullDay"."id")');
+
+/* Sin sesión no hay corazón que pintar, así que ni se consulta. */
+const likedLiteral = (viewerId) =>
+  viewerId
+    ? sequelize.literal(
+        `EXISTS (SELECT 1 FROM "FullDayLikes" AS flv WHERE flv."fullDayId" = "FullDay"."id" AND flv."userId" = ${sequelize.escape(String(viewerId))})`
+      )
+    : sequelize.literal('FALSE');
+
+const withLikes = (row) => {
+  const value = row.toJSON();
+  return {
+    ...value,
+    likesCount: Number(row.get('likesCount')) || 0,
+    liked: Boolean(row.get('liked')),
+  };
 };
 
 const locationInclude = (options = {}) => ({
@@ -79,7 +102,7 @@ const buildOrder = (sort) => {
   return options[String(sort || '').toLowerCase()] || options.recent;
 };
 
-const listFullDays = async (query = {}) => {
+const listFullDays = async (query = {}, viewerId = null) => {
   const where = { isHidden: false };
   if (query.billingDate) where.billingDate = query.billingDate;
   const destinationId = integerId(query.destinationId);
@@ -110,6 +133,12 @@ const listFullDays = async (query = {}) => {
   const page = positiveInteger(query.page, 1);
   const result = await FullDay.findAndCountAll({
     where,
+    attributes: {
+      include: [
+        [likesCountLiteral(), 'likesCount'],
+        [likedLiteral(viewerId), 'liked'],
+      ],
+    },
     include: [locationInclude({
       required: Boolean(destinationId || regionId),
       regionRequired: Boolean(regionId || destinationId),
@@ -123,7 +152,7 @@ const listFullDays = async (query = {}) => {
   });
   const total = Number(result.count) || 0;
   const data = result.rows.map((row) => {
-    const value = row.toJSON();
+    const value = withLikes(row);
     return { ...value, city: value.destination?.name || value.city };
   });
   return {
@@ -133,7 +162,17 @@ const listFullDays = async (query = {}) => {
 };
 
 const getFullDay = async (id, options = {}) => {
-  const fullDay = await FullDay.findByPk(id, { include: [locationInclude()], ...options });
+  const { viewerId = null, ...rest } = options;
+  const fullDay = await FullDay.findByPk(id, {
+    include: [locationInclude()],
+    attributes: {
+      include: [
+        [likesCountLiteral(), 'likesCount'],
+        [likedLiteral(viewerId), 'liked'],
+      ],
+    },
+    ...rest,
+  });
   if (!fullDay) throw new AppError('Full Day no encontrado.', 404);
   return fullDay;
 };
@@ -235,8 +274,59 @@ const permanentDeleteFullDay = async (id, req) => {
   if (image) await deleteStoredFiles(image);
 };
 
+/* Mismo comportamiento que el like de un lugar, incluido el bloqueo por
+   usuario: dos pulsaciones simultáneas se resolvían como dos inserciones
+   y el índice único devolvía un 409 en lugar de quitar el like. */
+const toggleFullDayLike = async (fullDayId, userId) => {
+  const fullDay = await FullDay.findOne({ where: { id: fullDayId, isHidden: false }, attributes: ['id'] });
+  if (!fullDay) throw new AppError('Full Day no encontrado.', 404);
+
+  const transaction = await sequelize.transaction();
+  try {
+    await sequelize.query('SELECT pg_advisory_xact_lock(hashtext(:lockKey));', {
+      replacements: { lockKey: `fullDayLike:${userId}:${fullDayId}` },
+      transaction,
+    });
+
+    const existing = await FullDayLike.findOne({ where: { fullDayId, userId }, transaction });
+    const liked = !existing;
+    if (existing) await existing.destroy({ transaction });
+    else await FullDayLike.create({ fullDayId, userId }, { transaction });
+
+    const likesCount = await FullDayLike.count({ where: { fullDayId }, transaction });
+    await transaction.commit();
+    return { liked, likesCount };
+  } catch (error) {
+    if (!transaction.finished) await transaction.rollback();
+    throw error;
+  }
+};
+
+const listFavoriteFullDays = async (userId) => {
+  const rows = await FullDay.findAll({
+    where: { isHidden: false },
+    attributes: { include: [[likesCountLiteral(), 'likesCount']] },
+    include: [
+      { model: FullDayLike, as: 'likes', attributes: [], required: true, where: { userId }, duplicating: false },
+      locationInclude(),
+    ],
+    order: [[sequelize.literal('"likesCount"'), 'DESC'], ['name', 'ASC']],
+    subQuery: false,
+  });
+
+  /* El filtro ya es "likes de este usuario": liked es true por
+     definición y no hace falta otra consulta para pintarlo en rojo. */
+  return rows.map((row) => ({
+    ...row.toJSON(),
+    likesCount: Number(row.get('likesCount')) || 0,
+    liked: true,
+  }));
+};
+
 module.exports = {
   createFullDay,
+  listFavoriteFullDays,
+  toggleFullDayLike,
   getFullDay,
   listFullDays,
   permanentDeleteFullDay,

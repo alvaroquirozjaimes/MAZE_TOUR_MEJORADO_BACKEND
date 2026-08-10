@@ -1,13 +1,17 @@
 const express = require('express');
 const controller = require('../controllers/full-day.controller');
-const { requireAdmin } = require('../middleware/auth');
+const { requireAdmin, requireAuth } = require('../middleware/auth');
 const { requireCsrf } = require('../middleware/csrf');
 const { uploadFields } = require('../middleware/upload');
 const { asyncHandler } = require('../utils/async-handler');
 
 const router = express.Router();
 router.get('/', asyncHandler(controller.list));
+/* Antes de '/:id': si no, Express entiende "favorites" como un id y
+   responde 400 al intentar convertirlo en número. */
+router.get('/favorites', requireAuth, asyncHandler(controller.favorites));
 router.get('/:id', asyncHandler(controller.getById));
+router.post('/:id/like', requireAuth, requireCsrf, asyncHandler(controller.like));
 router.post('/', requireAdmin, requireCsrf, uploadFields, asyncHandler(controller.create));
 router.put('/:id', requireAdmin, requireCsrf, uploadFields, asyncHandler(controller.update));
 router.patch('/:id/visibility', requireAdmin, requireCsrf, asyncHandler(controller.setVisibility));

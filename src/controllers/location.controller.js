@@ -11,7 +11,10 @@ const {
   updateRegion,
 } = require('../services/location.service');
 
-const catalog = async (_req, res) => res.status(200).json(await listCatalog());
+/* onlyWithContent: el selector público solo ofrece ubicaciones donde
+   hay algo que ver. El panel usa getAdminCatalog y sigue viendo todo. */
+const catalog = async (_req, res) =>
+  res.status(200).json(await listCatalog({ onlyWithContent: true }));
 const adminCatalog = async (_req, res) => res.status(200).json(await getAdminCatalog());
 
 const uploadedPath = (req, field) => storedPathForFile(req.files?.[field]?.[0]);

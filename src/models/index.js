@@ -10,10 +10,16 @@ const Room = require('./room')(sequelize, DataTypes);
 const Restaurant = require('./restaurant')(sequelize, DataTypes);
 const MenuItem = require('./menu-item')(sequelize, DataTypes);
 const Like = require('./like')(sequelize, DataTypes);
+const FullDayLike = require('./full-day-like')(sequelize, DataTypes);
 const FullDay = require('./full-day')(sequelize, DataTypes);
 const AdminActivityLog = require('./admin-activity-log')(sequelize, DataTypes);
 const ContactMessage = require('./contact-message')(sequelize, DataTypes);
 const ApiRateLimit = require('./api-rate-limit')(sequelize, DataTypes);
+/* Libro de Reclamaciones. A propósito SIN asociación con User:
+   una hoja debe conservarse 2 años aunque el consumidor cierre
+   su cuenta, y cualquier CASCADE contra "Users" la borraría. Se
+   identifica por documento, no por cuenta. */
+const Complaint = require('./complaint')(sequelize, DataTypes);
 
 Region.hasMany(Destination, { as: 'destinations', foreignKey: 'regionId', onDelete: 'RESTRICT', onUpdate: 'CASCADE' });
 Destination.belongsTo(Region, { as: 'region', foreignKey: 'regionId' });
@@ -34,6 +40,13 @@ Place.hasMany(Like, { as: 'likes', foreignKey: 'placeId', onDelete: 'CASCADE', o
 Like.belongsTo(Place, { as: 'place', foreignKey: 'placeId' });
 User.hasMany(Like, { as: 'likes', foreignKey: 'userId', sourceKey: 'googleId', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
 Like.belongsTo(User, { as: 'user', foreignKey: 'userId', targetKey: 'googleId' });
+/* Los Full Days tienen su propia tabla de likes: "Likes" está atada a
+   "placeId" y no puede distinguir un lugar de una salida. */
+FullDay.hasMany(FullDayLike, { as: 'likes', foreignKey: 'fullDayId', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+FullDayLike.belongsTo(FullDay, { as: 'fullDay', foreignKey: 'fullDayId' });
+User.hasMany(FullDayLike, { as: 'fullDayLikes', foreignKey: 'userId', sourceKey: 'googleId', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+FullDayLike.belongsTo(User, { as: 'user', foreignKey: 'userId', targetKey: 'googleId' });
+
 User.hasMany(AdminActivityLog, { as: 'activityLogs', foreignKey: 'userId', sourceKey: 'googleId', onDelete: 'SET NULL' });
 AdminActivityLog.belongsTo(User, { as: 'user', foreignKey: 'userId', targetKey: 'googleId' });
 
@@ -49,7 +62,9 @@ module.exports = {
   MenuItem,
   Like,
   FullDay,
+  FullDayLike,
   AdminActivityLog,
   ContactMessage,
+  Complaint,
   ApiRateLimit,
 };
