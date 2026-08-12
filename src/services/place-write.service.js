@@ -1,4 +1,4 @@
-const { Op } = require('sequelize');
+const { Op, QueryTypes } = require('sequelize');
 const { Place, Hotel, Room, Restaurant, MenuItem, Like, sequelize } = require('../models');
 const { AppError } = require('../utils/app-error');
 const { normalizeCategory, parseJson, toBoolean, toNumber } = require('../utils/parsers');
@@ -444,26 +444,50 @@ const permanentDeletePlace = async (id, req) => {
   await deleteStoredFiles(paths);
 };
 
+/* Un solo viaje a la base de datos. Antes eran siete consultas encadenadas
+   (buscar el lugar, BEGIN, lock consultivo, buscar el like, insertar o borrar,
+   contar, COMMIT) y cada una pagaba la latencia de red hasta PostgreSQL: con
+   50 ms de ida y vuelta eso son ~350 ms que el usuario siente como lentitud.
+   Todo cabe en una sentencia con CTEs, que además es atómica por sí misma.
+   El índice único (userId, placeId) ya impide duplicados, así que el
+   pg_advisory_xact_lock sobraba.
+
+   Las CTE ven la foto de la tabla anterior a la sentencia, por eso el conteo
+   final se corrige sumando lo insertado y restando lo borrado. */
+const TOGGLE_LIKE_SQL = `
+  WITH objetivo AS (
+    SELECT "id" FROM "Places" WHERE "id" = :placeId AND "isHidden" = false
+  ),
+  borrado AS (
+    DELETE FROM "Likes"
+    WHERE "placeId" = (SELECT "id" FROM objetivo) AND "userId" = :userId
+    RETURNING 1
+  ),
+  insertado AS (
+    INSERT INTO "Likes" ("placeId", "userId", "createdAt", "updatedAt")
+    SELECT (SELECT "id" FROM objetivo), :userId, NOW(), NOW()
+    WHERE EXISTS (SELECT 1 FROM objetivo) AND NOT EXISTS (SELECT 1 FROM borrado)
+    ON CONFLICT ("userId", "placeId") DO NOTHING
+    RETURNING 1
+  )
+  SELECT
+    EXISTS (SELECT 1 FROM objetivo) AS "existe",
+    EXISTS (SELECT 1 FROM insertado) AS "liked",
+    (
+      (SELECT COUNT(*) FROM "Likes" WHERE "placeId" = :placeId)
+      - (SELECT COUNT(*) FROM borrado)
+      + (SELECT COUNT(*) FROM insertado)
+    )::int AS "likesCount";
+`;
+
 const toggleLike = async (placeId, userId) => {
-  const place = await Place.findOne({ where: { id: placeId, isHidden: false }, attributes: ['id'] });
-  if (!place) throw new AppError('Lugar no encontrado.', 404);
-  const transaction = await sequelize.transaction();
-  try {
-    await sequelize.query('SELECT pg_advisory_xact_lock(hashtext(:lockKey));', {
-      replacements: { lockKey: `like:${userId}:${placeId}` },
-      transaction,
-    });
-    const existing = await Like.findOne({ where: { placeId, userId }, transaction });
-    const liked = !existing;
-    if (existing) await existing.destroy({ transaction });
-    else await Like.create({ placeId, userId }, { transaction });
-    const likesCount = await Like.count({ where: { placeId }, transaction });
-    await transaction.commit();
-    return { liked, likesCount };
-  } catch (error) {
-    if (!transaction.finished) await transaction.rollback();
-    throw error;
-  }
+  const [row] = await sequelize.query(TOGGLE_LIKE_SQL, {
+    replacements: { placeId, userId },
+    type: QueryTypes.SELECT,
+  });
+
+  if (!row?.existe) throw new AppError('Lugar no encontrado.', 404);
+  return { liked: Boolean(row.liked), likesCount: Number(row.likesCount) || 0 };
 };
 
 module.exports = {

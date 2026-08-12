@@ -1,4 +1,4 @@
-const { Op } = require('sequelize');
+const { Op, QueryTypes } = require('sequelize');
 const { FullDay, FullDayLike, Destination, Region, sequelize } = require('../models');
 const { AppError } = require('../utils/app-error');
 const { deleteStoredFiles, storedPathForFile, uploadedPathsFromRequest } = require('../utils/file-storage');
@@ -277,29 +277,42 @@ const permanentDeleteFullDay = async (id, req) => {
 /* Mismo comportamiento que el like de un lugar, incluido el bloqueo por
    usuario: dos pulsaciones simultáneas se resolvían como dos inserciones
    y el índice único devolvía un 409 en lugar de quitar el like. */
+/* Mismo criterio que en los lugares: una sola sentencia en vez de siete
+   consultas encadenadas. Ver place-write.service.js para el detalle. */
+const TOGGLE_FULL_DAY_LIKE_SQL = `
+  WITH objetivo AS (
+    SELECT "id" FROM "FullDays" WHERE "id" = :fullDayId AND "isHidden" = false
+  ),
+  borrado AS (
+    DELETE FROM "FullDayLikes"
+    WHERE "fullDayId" = (SELECT "id" FROM objetivo) AND "userId" = :userId
+    RETURNING 1
+  ),
+  insertado AS (
+    INSERT INTO "FullDayLikes" ("fullDayId", "userId", "createdAt", "updatedAt")
+    SELECT (SELECT "id" FROM objetivo), :userId, NOW(), NOW()
+    WHERE EXISTS (SELECT 1 FROM objetivo) AND NOT EXISTS (SELECT 1 FROM borrado)
+    ON CONFLICT ("userId", "fullDayId") DO NOTHING
+    RETURNING 1
+  )
+  SELECT
+    EXISTS (SELECT 1 FROM objetivo) AS "existe",
+    EXISTS (SELECT 1 FROM insertado) AS "liked",
+    (
+      (SELECT COUNT(*) FROM "FullDayLikes" WHERE "fullDayId" = :fullDayId)
+      - (SELECT COUNT(*) FROM borrado)
+      + (SELECT COUNT(*) FROM insertado)
+    )::int AS "likesCount";
+`;
+
 const toggleFullDayLike = async (fullDayId, userId) => {
-  const fullDay = await FullDay.findOne({ where: { id: fullDayId, isHidden: false }, attributes: ['id'] });
-  if (!fullDay) throw new AppError('Full Day no encontrado.', 404);
+  const [row] = await sequelize.query(TOGGLE_FULL_DAY_LIKE_SQL, {
+    replacements: { fullDayId, userId },
+    type: QueryTypes.SELECT,
+  });
 
-  const transaction = await sequelize.transaction();
-  try {
-    await sequelize.query('SELECT pg_advisory_xact_lock(hashtext(:lockKey));', {
-      replacements: { lockKey: `fullDayLike:${userId}:${fullDayId}` },
-      transaction,
-    });
-
-    const existing = await FullDayLike.findOne({ where: { fullDayId, userId }, transaction });
-    const liked = !existing;
-    if (existing) await existing.destroy({ transaction });
-    else await FullDayLike.create({ fullDayId, userId }, { transaction });
-
-    const likesCount = await FullDayLike.count({ where: { fullDayId }, transaction });
-    await transaction.commit();
-    return { liked, likesCount };
-  } catch (error) {
-    if (!transaction.finished) await transaction.rollback();
-    throw error;
-  }
+  if (!row?.existe) throw new AppError('Full Day no encontrado.', 404);
+  return { liked: Boolean(row.liked), likesCount: Number(row.likesCount) || 0 };
 };
 
 const listFavoriteFullDays = async (userId) => {
