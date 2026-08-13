@@ -113,59 +113,88 @@ const detectFileType = async (filePath) => {
   }
 };
 
-let heicConvertModule;
-const getHeicConvert = () => {
-  if (heicConvertModule) return heicConvertModule;
+let heicDecodeModule;
+const getHeicDecode = () => {
+  if (heicDecodeModule) return heicDecodeModule;
   try {
-    // Se carga solo cuando realmente llega un HEIC/HEIF.
-    // Instalar en backend: npm install heic-convert
-    heicConvertModule = require('heic-convert');
-    return heicConvertModule;
-  } catch (error) {
+    /*
+     * HEIC/HEIF no se pasa a Sharp directamente. Los binarios habituales de
+     * Sharp pueden reconocer el contenedor HEIF pero no necesariamente tienen
+     * el códec HEVC necesario para decodificar los píxeles.
+     *
+     * heic-decode usa libheif en JavaScript/WASM y nos entrega los píxeles
+     * RGBA. De ahí pasamos esos píxeles crudos a Sharp para generar UNA sola
+     * compresión final WebP, evitando el puente HEIC -> JPEG -> WebP y su
+     * pérdida de calidad adicional.
+     *
+     * Instalar en backend: npm install heic-decode
+     */
+    heicDecodeModule = require('heic-decode');
+    return heicDecodeModule;
+  } catch (_error) {
     throw new AppError(
-      'El servidor reconoce la foto HEIC/HEIF, pero falta instalar el conversor. Ejecuta "npm install heic-convert" en el backend.',
+      'El servidor reconoce la foto HEIC/HEIF, pero falta instalar el decodificador. Ejecuta "npm install heic-decode" en el backend.',
       500
     );
   }
 };
 
-const heicToJpegBuffer = async (filePath) => {
-  const convert = getHeicConvert();
+const heicToSharpPipeline = async (filePath) => {
+  const decode = getHeicDecode();
   const inputBuffer = await fs.readFile(filePath);
 
   try {
-    /* JPEG al 100% se usa solo como puente en memoria. La imagen final se
-       genera una sola vez como WebP optimizado. Evita guardar un JPG temporal
-       y reduce mucho el uso de memoria frente a un PNG de 12+ megapíxeles. */
-    const output = await convert({
-      buffer: inputBuffer,
-      format: 'JPEG',
-      quality: 1,
+    const decoded = await decode({ buffer: inputBuffer });
+    const width = Number(decoded?.width || 0);
+    const height = Number(decoded?.height || 0);
+    const data = decoded?.data;
+
+    if (!width || !height || !data?.byteLength) {
+      throw new Error('HEIC decodificado sin dimensiones o sin datos de píxeles.');
+    }
+
+    const expectedBytes = width * height * 4;
+    if (data.byteLength < expectedBytes) {
+      throw new Error(`HEIC incompleto: ${data.byteLength} bytes; se esperaban ${expectedBytes}.`);
+    }
+
+    /* Buffer.from(ArrayBuffer, offset, length) evita una copia adicional de
+       una foto de 12/24/48 MP. El resultado de heic-decode tiene 4 canales
+       RGBA, formato que Sharp acepta como entrada raw. */
+    const pixelBuffer = Buffer.from(data.buffer, data.byteOffset, expectedBytes);
+
+    return sharp(pixelBuffer, {
+      raw: {
+        width,
+        height,
+        channels: 4,
+      },
+      failOn: 'error',
+      limitInputPixels: 45_000_000,
     });
-    return Buffer.from(output);
   } catch (error) {
-    console.error('No se pudo decodificar HEIC/HEIF:', error.message);
-    throw new AppError('No se pudo procesar la foto HEIC/HEIF. Prueba con otra foto o vuelve a exportarla desde el iPhone.', 400);
+    console.error('No se pudo decodificar HEIC/HEIF:', error?.message || error);
+    throw new AppError(
+      'No se pudo procesar esta foto HEIC/HEIF. Prueba con otra foto o expórtala nuevamente desde el iPhone.',
+      400
+    );
   }
 };
 
 const createSharpPipeline = async (file, actualType) => {
   const sharpOptions = { failOn: 'error', limitInputPixels: 45_000_000 };
 
-  if (actualType !== 'heic' && actualType !== 'heif') {
-    return sharp(file.path, sharpOptions);
+  if (actualType === 'heic' || actualType === 'heif') {
+    /*
+     * IMPORTANTE: no usamos sharp(file.path).metadata() como prueba de
+     * compatibilidad. libvips puede leer los metadatos HEIF y fallar recién
+     * al decodificar los píxeles con "Support for this compression format has
+     * not been built in". HEIC/HEIF siempre pasa por heic-decode.
+     */
+    return heicToSharpPipeline(file.path);
   }
 
-  /* Algunas instalaciones de sharp/libvips pueden leer HEIC directamente y
-     otras no incluyen el códec HEVC. Primero aprovechamos soporte nativo; si
-     no existe, hacemos fallback a heic-convert. */
-  try {
-    await sharp(file.path, sharpOptions).metadata();
-    return sharp(file.path, sharpOptions);
-  } catch (_nativeHeicError) {
-    const jpegBuffer = await heicToJpegBuffer(file.path);
-    return sharp(jpegBuffer, sharpOptions);
-  }
+  return sharp(file.path, sharpOptions);
 };
 
 const optimizeImage = async (file, actualType) => {
