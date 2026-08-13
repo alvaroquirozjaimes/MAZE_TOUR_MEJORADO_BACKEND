@@ -76,11 +76,11 @@ const env = Object.freeze({
   chatTimeoutMs: toInteger(process.env.CHAT_TIMEOUT_MS, 15000),
 
   maxUploadTotalBytes: toInteger(process.env.MAX_UPLOAD_TOTAL_MB, 80) * 1024 * 1024,
-  maxImageBytes: toInteger(process.env.MAX_IMAGE_MB, 6) * 1024 * 1024,
+  maxImageBytes: toInteger(process.env.MAX_IMAGE_MB, 15) * 1024 * 1024,
   maxPdfBytes: toInteger(process.env.MAX_PDF_MB, 12) * 1024 * 1024,
   imageMaxWidth: toInteger(process.env.IMAGE_MAX_WIDTH, 2200),
   imageMaxHeight: toInteger(process.env.IMAGE_MAX_HEIGHT, 2200),
-  imageWebpQuality: toInteger(process.env.IMAGE_WEBP_QUALITY, 82),
+  imageWebpQuality: toInteger(process.env.IMAGE_WEBP_QUALITY, 85),
 
   uploadRoot: path.join(projectRoot, 'storage', 'uploads'),
   upload2Root: path.join(projectRoot, 'storage', 'uploads2'),

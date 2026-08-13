@@ -22,6 +22,15 @@ const fieldDirectories = {
 };
 
 const pdfFields = new Set(['restaurantMenuPdf', 'restaurantMenuPdfs']);
+const supportedImageTypes = new Set(['jpeg', 'png', 'webp', 'heic', 'heif']);
+
+/*
+ * Los iPhone suelen guardar las fotos como HEIC/HEIF. No confiamos en la
+ * extensión ni en el MIME enviado por el navegador: detectamos el formato
+ * real leyendo la cabecera del archivo.
+ */
+const HEIC_BRANDS = new Set(['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs']);
+const HEIF_BRANDS = new Set(['mif1', 'msf1']);
 
 const storage = multer.diskStorage({
   destination(_req, file, callback) {
@@ -39,7 +48,10 @@ const storage = multer.diskStorage({
 const rawUpload = multer({
   storage,
   limits: {
-    fileSize: env.maxPdfBytes,
+    /* El límite previo estaba atado al PDF. Ahora respeta el mayor límite
+       permitido para que una foto HEIC de iPhone no sea rechazada por Multer
+       antes de que podamos optimizarla. */
+    fileSize: Math.max(env.maxImageBytes, env.maxPdfBytes),
     files: 80,
     fields: 200,
     fieldSize: 2 * 1024 * 1024,
@@ -76,28 +88,98 @@ const removePhysicalFiles = async (files) => {
 const detectFileType = async (filePath) => {
   const handle = await fs.open(filePath, 'r');
   try {
-    const buffer = Buffer.alloc(16);
+    const buffer = Buffer.alloc(128);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     const head = buffer.subarray(0, bytesRead);
+
     if (head.subarray(0, 5).toString('ascii') === '%PDF-') return 'pdf';
     if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return 'jpeg';
     if (head.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'png';
     if (head.subarray(0, 4).toString('ascii') === 'RIFF' && head.subarray(8, 12).toString('ascii') === 'WEBP') return 'webp';
+
+    // HEIF/HEIC usa un contenedor ISO-BMFF: [size][ftyp][major brand]...
+    if (head.length >= 12 && head.subarray(4, 8).toString('ascii') === 'ftyp') {
+      const brands = [];
+      for (let offset = 8; offset + 4 <= head.length; offset += 4) {
+        brands.push(head.subarray(offset, offset + 4).toString('ascii').toLowerCase());
+      }
+      if (brands.some((brand) => HEIC_BRANDS.has(brand))) return 'heic';
+      if (brands.some((brand) => HEIF_BRANDS.has(brand))) return 'heif';
+    }
+
     return 'unknown';
   } finally {
     await handle.close();
   }
 };
 
-const optimizeImage = async (file) => {
+let heicConvertModule;
+const getHeicConvert = () => {
+  if (heicConvertModule) return heicConvertModule;
+  try {
+    // Se carga solo cuando realmente llega un HEIC/HEIF.
+    // Instalar en backend: npm install heic-convert
+    heicConvertModule = require('heic-convert');
+    return heicConvertModule;
+  } catch (error) {
+    throw new AppError(
+      'El servidor reconoce la foto HEIC/HEIF, pero falta instalar el conversor. Ejecuta "npm install heic-convert" en el backend.',
+      500
+    );
+  }
+};
+
+const heicToJpegBuffer = async (filePath) => {
+  const convert = getHeicConvert();
+  const inputBuffer = await fs.readFile(filePath);
+
+  try {
+    /* JPEG al 100% se usa solo como puente en memoria. La imagen final se
+       genera una sola vez como WebP optimizado. Evita guardar un JPG temporal
+       y reduce mucho el uso de memoria frente a un PNG de 12+ megapíxeles. */
+    const output = await convert({
+      buffer: inputBuffer,
+      format: 'JPEG',
+      quality: 1,
+    });
+    return Buffer.from(output);
+  } catch (error) {
+    console.error('No se pudo decodificar HEIC/HEIF:', error.message);
+    throw new AppError('No se pudo procesar la foto HEIC/HEIF. Prueba con otra foto o vuelve a exportarla desde el iPhone.', 400);
+  }
+};
+
+const createSharpPipeline = async (file, actualType) => {
+  const sharpOptions = { failOn: 'error', limitInputPixels: 45_000_000 };
+
+  if (actualType !== 'heic' && actualType !== 'heif') {
+    return sharp(file.path, sharpOptions);
+  }
+
+  /* Algunas instalaciones de sharp/libvips pueden leer HEIC directamente y
+     otras no incluyen el códec HEVC. Primero aprovechamos soporte nativo; si
+     no existe, hacemos fallback a heic-convert. */
+  try {
+    await sharp(file.path, sharpOptions).metadata();
+    return sharp(file.path, sharpOptions);
+  } catch (_nativeHeicError) {
+    const jpegBuffer = await heicToJpegBuffer(file.path);
+    return sharp(jpegBuffer, sharpOptions);
+  }
+};
+
+const optimizeImage = async (file, actualType) => {
   if (file.size > env.maxImageBytes) {
-    throw new AppError(`Cada imagen debe pesar como máximo ${Math.round(env.maxImageBytes / 1024 / 1024)} MB.`, 400);
+    throw new AppError(`Cada imagen debe pesar como máximo ${Math.round(env.maxImageBytes / 1024 / 1024)} MB antes de optimizarse.`, 400);
   }
 
   const outputPath = file.path.replace(/\.upload$/i, '.webp');
   const temporaryPath = `${outputPath}.tmp`;
+
   try {
-    await sharp(file.path, { failOn: 'error', limitInputPixels: 45_000_000 })
+    const pipeline = await createSharpPipeline(file, actualType);
+
+    await pipeline
       .rotate()
       .resize({
         width: env.imageMaxWidth,
@@ -105,11 +187,18 @@ const optimizeImage = async (file) => {
         fit: 'inside',
         withoutEnlargement: true,
       })
-      .webp({ quality: env.imageWebpQuality, effort: 4 })
+      .toColourspace('srgb')
+      .webp({
+        quality: env.imageWebpQuality,
+        alphaQuality: 90,
+        smartSubsample: true,
+        effort: 5,
+      })
       .toFile(temporaryPath);
 
     await fs.rename(temporaryPath, outputPath);
     await fs.unlink(file.path);
+
     const stat = await fs.stat(outputPath);
     file.path = outputPath;
     file.filename = path.basename(outputPath);
@@ -131,15 +220,16 @@ const validateAndProcess = async (req) => {
 
   for (const file of files) {
     const actualType = await detectFileType(file.path);
+
     if (pdfFields.has(file.fieldname)) {
       if (actualType !== 'pdf') throw new AppError('La carta del restaurante debe ser un PDF válido.', 400);
       if (file.size > env.maxPdfBytes) throw new AppError('El PDF supera el tamaño permitido.', 400);
       file.mimetype = 'application/pdf';
     } else {
-      if (!['jpeg', 'png', 'webp'].includes(actualType)) {
-        throw new AppError('Solo se aceptan imágenes JPG, PNG o WEBP válidas.', 400);
+      if (!supportedImageTypes.has(actualType)) {
+        throw new AppError('Solo se aceptan imágenes JPG, PNG, WEBP, HEIC o HEIF válidas.', 400);
       }
-      await optimizeImage(file);
+      await optimizeImage(file, actualType);
     }
   }
 };
@@ -149,6 +239,10 @@ const uploadFields = (req, res, next) => {
     if (error) {
       await removePhysicalFiles(allFiles(req));
       if (error instanceof multer.MulterError) {
+        if (error.code === 'LIMIT_FILE_SIZE') {
+          const maxMb = Math.round(Math.max(env.maxImageBytes, env.maxPdfBytes) / 1024 / 1024);
+          return next(new AppError(`El archivo supera el máximo permitido de ${maxMb} MB.`, 400));
+        }
         return next(new AppError(`Carga inválida: ${error.message}`, 400));
       }
       return next(error);
