@@ -9,6 +9,7 @@ const {
   storedPathForFile,
   uploadedPathsFromRequest,
 } = require('../utils/file-storage');
+const { parseImageFocus, resetImageFocus } = require('../utils/image-focus');
 const { getPlaceDetail } = require('./place-query.service');
 const { logAdminAction } = require('./audit.service');
 const { getDestination } = require('./location.service');
@@ -296,6 +297,9 @@ const createPlace = async (req) => {
         billingDate: req.body.billingDate,
         category: normalizeCategory(req.body.category),
         imageUrl: fallbackImage,
+        /* Encuadre elegido en el formulario. Si no llega nada, queda
+           centrado y la tarjeta se ve igual que siempre. */
+        ...parseImageFocus(req.body),
         gallery,
         isHidden: false,
         createdBy: actor,
@@ -346,6 +350,23 @@ const updatePlace = async (id, req) => {
     const mainImage = storedPathForFile(filesFor(req, 'mainImage')[0]);
     if (mainImage) values.imageUrl = mainImage;
     else if (toBoolean(req.body.removeMainImage, false)) values.imageUrl = null;
+    else if (req.body.coverImage !== undefined) {
+      /* Los formularios de hotel y restaurante no suben una portada
+         aparte: eligen cuál de las fotos que ya tienen hace de portada.
+         safeExistingPaths es la misma barrera que usa la galería — solo
+         se acepta una ruta que ya pertenezca a este lugar, para que
+         nadie pueda apuntar la portada a un archivo ajeno. */
+      const [cover] = safeExistingPaths([req.body.coverImage], allowedPaths);
+      if (cover) values.imageUrl = cover;
+    }
+
+    /* El encuadre pertenece a una foto concreta. Si entra una portada
+       nueva y el formulario no dice cómo encuadrarla, se vuelve al
+       centro: heredar el encuadre de la foto anterior recortaría la
+       nueva por un punto que ya no significa nada. */
+    const focusValues = parseImageFocus(req.body, { partial: true });
+    if (Object.keys(focusValues).length) Object.assign(values, focusValues);
+    else if (mainImage) Object.assign(values, resetImageFocus());
 
     if (req.body.existingGallery !== undefined || filesFor(req, 'gallery').length) {
       const existingGallery = req.body.existingGallery !== undefined

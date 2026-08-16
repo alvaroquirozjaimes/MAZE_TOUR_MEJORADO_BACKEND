@@ -110,7 +110,9 @@ const listEntity = async (Model, attributes, query) => {
 const listAdminPlaces = (query = {}) =>
   listEntity(
     Place,
-    ['id', 'name', 'imageUrl', 'category', 'city', 'destinationId', 'billingDate', 'isHidden', 'deletedAt', 'createdAt', 'updatedAt'],
+    /* imageFocus*: la miniatura del panel usa el mismo encuadre que la
+       tarjeta pública, para que el panel muestre lo que ve el visitante. */
+    ['id', 'name', 'imageUrl', 'imageFocusX', 'imageFocusY', 'imageZoom', 'category', 'city', 'destinationId', 'billingDate', 'isHidden', 'deletedAt', 'createdAt', 'updatedAt'],
     query
   );
 
@@ -166,7 +168,7 @@ const listRelatedEntity = async (Model, type, query = {}) => {
         required: true,
         paranoid,
         where: placeWhere,
-        attributes: ['id', 'name', 'city', 'destinationId', 'billingDate', 'isHidden', 'deletedAt', 'imageUrl'],
+        attributes: ['id', 'name', 'city', 'destinationId', 'billingDate', 'isHidden', 'deletedAt', 'imageUrl', 'imageFocusX', 'imageFocusY', 'imageZoom'],
         include: [{
           model: Destination,
           as: 'destination',
@@ -191,7 +193,14 @@ const listRelatedEntity = async (Model, type, query = {}) => {
       name: value.name,
       description: value.description,
       category: type,
-      imageUrl: images[0] || value.place?.imageUrl || null,
+      /* La portada del lugar manda sobre la primera foto de la galería:
+         es la que eligió el administrador y la que ve el visitante en el
+         catálogo. La galería queda solo como respaldo para fichas
+         antiguas que aún no tengan portada asignada. */
+      imageUrl: value.place?.imageUrl || images[0] || null,
+      imageFocusX: value.place?.imageFocusX ?? 50,
+      imageFocusY: value.place?.imageFocusY ?? 50,
+      imageZoom: value.place?.imageZoom ?? 1,
       city: value.place?.destination?.name || value.place?.city || null,
       destinationName: value.place?.destination?.name || value.place?.city || null,
       regionName: value.place?.destination?.region?.name || null,

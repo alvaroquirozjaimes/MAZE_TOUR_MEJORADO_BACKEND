@@ -15,6 +15,35 @@ module.exports = (sequelize, DataTypes) =>
       longDescription: { type: DataTypes.TEXT, allowNull: true },
       price: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0, validate: { min: 0 } },
       imageUrl: { type: DataTypes.TEXT, allowNull: true },
+
+      /* Encuadre de la portada. Ver migración 010.
+         Sin esto la tarjeta siempre recorta desde el centro. */
+      imageFocusX: {
+        type: DataTypes.SMALLINT,
+        allowNull: false,
+        defaultValue: 50,
+        validate: { min: 0, max: 100 },
+      },
+      imageFocusY: {
+        type: DataTypes.SMALLINT,
+        allowNull: false,
+        defaultValue: 50,
+        validate: { min: 0, max: 100 },
+      },
+      /* NUMERIC de node-postgres llega como texto ("1.40"). El getter lo
+         devuelve como número para que el JSON de la API no obligue al
+         frontend a convertirlo antes de escribirlo en un style. */
+      imageZoom: {
+        type: DataTypes.DECIMAL(4, 2),
+        allowNull: false,
+        defaultValue: 1,
+        validate: { min: 1, max: 3 },
+        get() {
+          const value = Number(this.getDataValue('imageZoom'));
+          return Number.isFinite(value) ? value : 1;
+        },
+      },
+
       gallery: { type: DataTypes.ARRAY(DataTypes.TEXT), allowNull: true, defaultValue: [] },
       isHidden: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
       billingDate: { type: DataTypes.DATEONLY, allowNull: false },

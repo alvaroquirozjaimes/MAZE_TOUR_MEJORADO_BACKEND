@@ -174,6 +174,7 @@ const listPlaces = async (query = {}, viewerId = null) => {
     })],
     attributes: [
       'id', 'name', 'shortDescription', 'imageUrl', 'price', 'city', 'destinationId', 'category',
+      'imageFocusX', 'imageFocusY', 'imageZoom',
       'createdAt', 'billingDate', [likesCountLiteral(), 'likesCount'],
       [likedLiteral(viewerId), 'liked'],
       [childCountLiteral('Hotels'), 'hotelsCount'],
@@ -195,6 +196,11 @@ const listPlaces = async (query = {}, viewerId = null) => {
         name: place.name,
         description: place.shortDescription,
         imageUrl: place.imageUrl,
+        /* El encuadre viaja con la tarjeta: sin estos tres valores el
+           catálogo volvería a recortar desde el centro. */
+        imageFocusX: place.imageFocusX,
+        imageFocusY: place.imageFocusY,
+        imageZoom: place.imageZoom,
         price: place.price,
         city: destination?.name || place.city,
         destinationId: place.destinationId,
